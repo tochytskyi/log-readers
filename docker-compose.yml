@@ -99,6 +99,41 @@ services:
       - elasticsearch
       - logstash
 
+  mongo:
+    image: "mongo:4.1"
+    restart: always
+    networks:
+      - log-reader
+
+  graylog:
+    image: graylog/graylog:4.0
+    restart: always
+    environment:
+      - GRAYLOG_HTTP_EXTERNAL_URI=http://127.0.0.1:9201/
+      - GRAYLOG_HTTP_ENABLE_CORS=true
+      - GRAYLOG_ELASTICSEARCH_VERSION=7
+      - GRAYLOG_ELASTICSEARCH_HOSTS=http://elastic:admin@elasticsearch:9200
+    links:
+      - mongo:mongo
+      - elasticsearch:elasticsearch
+    depends_on:
+      - mongo
+      - elasticsearch
+    ports:
+      # HTTP
+      - 9201:9000
+      # Syslog TCP
+      - 1514:1514
+      # Syslog UDP
+      - 1514:1514/udp
+      # GELF TCP
+      - 12201:12201
+      # GELF UDP
+      - 12201:12201/udp
+    networks:
+      - log-reader
+
+
 networks:
   log-reader:
     driver: bridge
