@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:5.7.22
+    container_name: mysql-slow-logs
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3316:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      SERVICE_NAME: mysql
+    volumes:
+      - ./conf/mysql/custom.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      - ./conf/mysql/slow-query.sql:/usr/sql/slow-query.sql:ro
+      - ./conf/mysql/test_db:/usr/sql/test_db
+      - mysql-logs:/var/log/mysql/
+    networks:
+      - log-reader
+
+  elasticsearch:
+    build:
+      context: conf/elasticsearch/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    volumes:
+      - ./conf/elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
+      #- elasticsearch:/usr/share/elasticsearch/data:z
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+      ELASTIC_PASSWORD: $ELASTIC_PASSWORD
+      # Use single node discovery in order to disable production mode and avoid bootstrap checks.
+      # see: https://www.elastic.co/guide/en/elasticsearch/reference/current/bootstrap-checks.html
+      discovery.type: single-node
+    networks:
+      - log-reader
+
+  logstash:
+    build:
+      context: conf/logstash/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    volumes:
+      - ./conf/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,z
+      - ./conf/logstash/pipeline:/usr/share/logstash/pipeline:ro,z
+    ports:
+      - "5044:5044"
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    networks:
+      - log-reader
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    build:
+      context: conf/kibana/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    volumes:
+      - ./conf/kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,z
+    ports:
+      - "5601:5601"
+    networks:
+      - log-reader
+    depends_on:
+      - elasticsearch
+
+  filebeat:
+    build:
+      context: conf/filebeat/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    user: root
+    command:
+      # Log to stderr.
+      - -e
+      # Disable config file permissions checks. Allows mounting
+      # 'config/filebeat.yml' even if it's not owned by root.
+      # see: https://www.elastic.co/guide/en/beats/libbeat/current/config-file-permissions.html
+      - --strict.perms=false
+    volumes:
+      - type: bind
+        source: ./conf/filebeat/config/filebeat.yml
+        target: /usr/share/filebeat/filebeat.yml
+        read_only: true
+      - ./conf/filebeat/config/mysql.yml:/usr/share/filebeat/modules.d/mysql.yml
+      - mysql-logs:/var/log/mysql/
+    networks:
+      - log-reader
+    depends_on:
+      - elasticsearch
+      - logstash
+
+networks:
+  log-reader:
+    driver: bridge
+
+volumes:
+  mysql-logs:
+    driver: local
